@@ -17,7 +17,7 @@ CORS(app, origins=["https://ecocarbon.onrender.com", "http://localhost:5173"], s
 # Admin email configuration
 ADMIN_EMAIL = "jadhavaj7620@gmail.com"
 
-# Email configuration (update with your SMTP settings)
+# Email configuration
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", 587))
 EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS", "your-email@gmail.com")
@@ -28,12 +28,20 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable not set!")
 
-# --- Initialize Postgres Database ---
+# Schema name for this service
+SCHEMA_NAME = "ecocarbon_schema"
+
+# --- Initialize Postgres Database with Schema ---
 def init_db():
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS contacts (
+    
+    # Create schema if not exists
+    cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME}")
+    
+    # Create tables in the specific schema
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.contacts (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             email TEXT NOT NULL,
@@ -45,9 +53,9 @@ def init_db():
         )
     """)
     
-    # Create table for OTP storage
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS admin_otps (
+    # Create table for OTP storage in the schema
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.admin_otps (
             id SERIAL PRIMARY KEY,
             email TEXT NOT NULL,
             otp TEXT NOT NULL,
@@ -61,6 +69,16 @@ def init_db():
     conn.close()
 
 init_db()
+
+def get_connection():
+    """Get database connection with schema set"""
+    conn = psycopg2.connect(DATABASE_URL)
+    cursor = conn.cursor()
+    # Set the search path to our schema
+    cursor.execute(f"SET search_path TO {SCHEMA_NAME}")
+    conn.commit()
+    cursor.close()
+    return conn
 
 def generate_otp(length=6):
     """Generate a random OTP"""
@@ -113,7 +131,7 @@ def send_otp():
     expires_at = datetime.now() + timedelta(minutes=10)
     
     # Store OTP in database
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = get_connection()
     cursor = conn.cursor()
     
     # Clean up expired OTPs
@@ -145,7 +163,7 @@ def verify_otp():
     if email != ADMIN_EMAIL:
         return jsonify({"error": "Unauthorized access"}), 403
     
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = get_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     
     # Find valid OTP
@@ -192,8 +210,8 @@ def get_contacts():
     if not session.get('admin_logged_in') or session.get('admin_email') != ADMIN_EMAIL:
         return jsonify({"error": "Unauthorized"}), 401
     
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-    cursor = conn.cursor()
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT * FROM contacts ORDER BY created_at DESC")
     rows = cursor.fetchall()
     cursor.close()
@@ -215,7 +233,7 @@ def save_contact():
     if not name or not email or not message:
         return jsonify({"error": "Missing required fields"}), 400
 
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO contacts (name, email, company, phone, service, message)
