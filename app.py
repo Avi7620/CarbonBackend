@@ -6,8 +6,8 @@ from psycopg2.extras import RealDictCursor
 import smtplib
 import random
 import string
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
@@ -87,7 +87,7 @@ def generate_otp(length=6):
 def send_otp_email(email, otp):
     """Send OTP to email"""
     try:
-        msg = MimeMultipart()
+        msg = MIMEMultipart()
         msg['From'] = EMAIL_ADDRESS
         msg['To'] = email
         msg['Subject'] = "Admin Login OTP"
@@ -103,7 +103,7 @@ def send_otp_email(email, otp):
         </html>
         """
         
-        msg.attach(MimeText(body, 'html'))
+        msg.attach(MIMEText(body, 'html'))
         
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
@@ -244,6 +244,11 @@ def save_contact():
     conn.close()
 
     return jsonify({"message": "Form submitted successfully!"}), 201
+
+# Health check endpoint
+@app.route("/api/health", methods=["GET"])
+def health_check():
+    return jsonify({"status": "healthy", "message": "EcoCarbon API is running"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
