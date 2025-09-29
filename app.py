@@ -20,8 +20,8 @@ ADMIN_EMAIL = "jadhavaj7620@gmail.com"
 # Email configuration
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", 587))
-EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS", "your-email@gmail.com")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "your-app-password")
+EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS", "jadhavavi7620@gmail.com")
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "pfwhfzhxcucbcoiy")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
