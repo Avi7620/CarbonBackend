@@ -1,37 +1,34 @@
 from flask import Flask, request, jsonify, session
 from flask_cors import CORS
-from flask_mail import Mail, Message
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import time
-import secrets
+import random, smtplib
+from email.mime.text import MIMEText
 
-# --- Flask App Setup ---
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "your-secret-key")
-CORS(app, origins=["https://ecocarbon.onrender.com", "http://localhost:5173"], supports_credentials=True)
 
-# --- Mail Setup ---
-app.config["MAIL_SERVER"] = "smtp.gmail.com"
-app.config["MAIL_PORT"] = 587
-app.config["MAIL_USE_TLS"] = True
-app.config["MAIL_USERNAME"] = os.environ.get("MAIL_USERNAME", "jadhavavi7620@gmail.com")
-app.config["MAIL_PASSWORD"] = os.environ.get("MAIL_PASSWORD", "pfwhfzhxcucbcoiy")
+# --- Config ---
+app.secret_key = os.environ.get("SECRET_KEY", "supersecret")  # Required for sessions
+CORS(
+    app,
+    supports_credentials=True,
+    origins=["https://ecocarbon.onrender.com", "http://localhost:5173"]
+)
 
-mail = Mail(app)
-otp_storage = {}  # { email: {otp: 123456, expires: timestamp} }
-
-# --- Database Setup ---
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable not set!")
 
+ADMIN_EMAIL = "jadhavaj7620@gmail.com"
+
+
+# --- Initialize Postgres Database ---
 def init_db():
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS submissions (
+        CREATE TABLE IF NOT EXISTS contacts (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             email TEXT NOT NULL,
@@ -46,35 +43,11 @@ def init_db():
     cursor.close()
     conn.close()
 
+
 init_db()
 
-# --- OTP Functions ---
-def send_otp_email(email):
-    otp = secrets.randbelow(900000) + 100000
-    otp_storage[email] = {"otp": otp, "expires": time.time() + 300}
 
-    msg = Message(
-        "Your Admin OTP",
-        sender=app.config["MAIL_USERNAME"],
-        recipients=[email]
-    )
-    msg.body = f"Your OTP is {otp}. It will expire in 5 minutes."
-    mail.send(msg)
-    return otp
-
-def verify_otp(email, otp):
-    record = otp_storage.get(email)
-    if not record:
-        return False, "OTP not requested"
-    if time.time() > record["expires"]:
-        return False, "OTP expired"
-    if str(record["otp"]) == str(otp):
-        return True, "OTP verified"
-    return False, "Invalid OTP"
-
-# ======================
-# API 1: Save Contact Form
-# ======================
+# --- Contact Form API ---
 @app.route("/api/contact", methods=["POST"])
 def save_contact():
     data = request.get_json()
@@ -91,7 +64,7 @@ def save_contact():
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO submissions (name, email, company, phone, service, message)
+        INSERT INTO contacts (name, email, company, phone, service, message)
         VALUES (%s, %s, %s, %s, %s, %s)
     """, (name, email, company, phone, service, message))
     conn.commit()
@@ -100,68 +73,62 @@ def save_contact():
 
     return jsonify({"message": "Form submitted successfully!"}), 201
 
-# ======================
-# API 2: Get Submissions (Admin Only)
-# ======================
-@app.route("/api/submissions", methods=["GET"])
-def get_submissions():
-    if not session.get("admin"):
+
+@app.route("/api/contacts", methods=["GET"])
+def get_contacts():
+    if not session.get("is_admin"):
         return jsonify({"error": "Unauthorized"}), 403
 
     conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM submissions ORDER BY created_at DESC")
+    cursor.execute("SELECT * FROM contacts ORDER BY created_at DESC")
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
     return jsonify(rows)
 
-# ======================
-# API 3: Send OTP (Admin Login)
-# ======================
+
+# --- OTP Login API ---
 @app.route("/api/send-otp", methods=["POST"])
 def send_otp():
     data = request.get_json()
     email = data.get("email")
 
-    if email != "jadhavaj7620@gmail.com":
-        return jsonify({"error": "Unauthorized"}), 403
+    if not email or email.lower() != ADMIN_EMAIL:
+        return jsonify({"error": "Unauthorized access"}), 403
+
+    otp = str(random.randint(100000, 999999))  # 6-digit OTP
+    session["otp"] = otp
+    session["email"] = email
 
     try:
-        send_otp_email(email)
-        return jsonify({"message": "OTP sent to email"}), 200
+        msg = MIMEText(f"Your Admin OTP is: {otp}")
+        msg["Subject"] = "Admin Login OTP"
+        msg["From"] = os.environ.get("EMAIL_USER")
+        msg["To"] = email
+
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(os.environ["EMAIL_USER"], os.environ["EMAIL_PASS"])
+            server.send_message(msg)
+
+        return jsonify({"message": "OTP sent successfully"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ======================
-# API 4: Verify OTP
-# ======================
+
 @app.route("/api/verify-otp", methods=["POST"])
-def verify_otp_route():
+def verify_otp():
     data = request.get_json()
     email = data.get("email")
     otp = data.get("otp")
 
-    if not email or not otp:
-        return jsonify({"error": "Email and OTP required"}), 400
+    if email != session.get("email") or otp != session.get("otp"):
+        return jsonify({"error": "Invalid OTP"}), 400
 
-    success, msg = verify_otp(email, otp)
-    if success:
-        session["admin"] = True
-        return jsonify({"message": "Login successful"}), 200
-    return jsonify({"error": msg}), 400
+    session["is_admin"] = True
+    return jsonify({"message": "Login successful"})
 
-# ======================
-# API 5: Admin Dashboard
-# ======================
-@app.route("/api/admin-dashboard", methods=["GET"])
-def admin_dashboard():
-    if not session.get("admin"):
-        return jsonify({"error": "Unauthorized"}), 403
-    return jsonify({"message": "Welcome to Admin Dashboard"}), 200
 
-# ======================
-# Run Server
-# ======================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
