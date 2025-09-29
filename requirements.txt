@@ -2,5 +2,5 @@ flask
 flask-cors
 werkzeug==2.0.3
 psycopg2-binary
-
+flask_mail
 gunicorn
